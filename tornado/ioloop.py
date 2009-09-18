@@ -312,6 +312,49 @@ class _EPoll(object):
     def poll(self, timeout):
         return epoll.epoll_wait(self._epoll_fd, int(timeout * 1000))
 
+class _LibEvent(object):
+    """A libevent based IOLoop implementation"""
+
+    def __init__(self):
+        self._eb = libevent.EventBase()
+        self._events = {}
+        self._ready_fds = {}
+
+    def _fd_ready(self, fd, events, eventObj):
+        eventmask = (IOLoop.READ * (events & libevent.EV_READ) / libevent.EV_READ) | \
+                    (IOLoop.WRITE * (events & libevent.EV_WRITE) / libevent.EV_WRITE) | \
+                    (IOLoop.ERROR * (events & libevent.EV_TIMEOUT) / libevent.EV_TIMEOUT)
+
+        self._ready_fds[fd] = eventmask
+
+    def register(self, fd, events):
+        eventmask = 0
+        if events & IOLoop.READ:
+            eventmask = eventmask | libevent.EV_READ | libevent.EV_PERSIST
+        if events & IOLoop.WRITE:
+            eventmask = eventmask | libevent.EV_WRITE
+        if events & IOLoop.ERROR:
+            # does libevent has error event type?
+            eventmask = eventmask | libevent.EV_TIMEOUT
+
+        self._events[fd] = self._eb.create_event(fd, eventmask, self._fd_ready)
+        self._events[fd].add_to_loop()
+
+    def modify(self, fd, events):
+        self.unregister(fd)
+        self.register(fd, events)
+
+    def unregister(self, fd):
+        self._events[fd].remove_from_loop()
+        del self._events[fd]
+
+    def poll(self, timeout=10):
+        self._ready_fds = {}
+        
+        self._eb.loop_exit(timeout)
+        self._eb.loop(libevent.EVLOOP_ONCE|libevent.EVLOOP_NONBLOCK)
+
+        return self._ready_fds.items()
 
 class _Select(object):
     """A simple, select()-based IOLoop implementation for non-Linux systems"""
@@ -359,8 +402,13 @@ else:
         import epoll
         _poll = _EPoll
     except:
-        # All other systems
-        import sys
-        if "linux" in sys.platform:
-            logging.warning("epoll module not found; using select()")
-        _poll = _Select
+        try:
+            # try to use libevent
+            import libevent
+            _poll = _LibEvent
+        except:
+            # All other systems
+            import sys
+            if "linux" in sys.platform:
+                logging.warning("epoll module not found; using select()")
+            _poll = _Select
