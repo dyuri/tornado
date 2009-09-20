@@ -352,7 +352,8 @@ class _LibEvent(object):
         self._ready_fds = {}
         
         self._eb.loop_exit(timeout)
-        self._eb.loop(libevent.EVLOOP_ONCE|libevent.EVLOOP_NONBLOCK)
+        # if libevent.EVLOOP_NONBLOCK is used, the process eats up the cpu
+        self._eb.loop(libevent.EVLOOP_ONCE)
 
         return self._ready_fds.items()
 
